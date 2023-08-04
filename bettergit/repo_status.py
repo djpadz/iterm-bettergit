@@ -39,7 +39,7 @@ class RepoStatus:
         parts.append(part.strip())
         part = ""
         if self.modified > 0:
-            part += f" \N{PENCIL} {self.modified}"
+            part += f" \N{LOWER RIGHT PENCIL} {self.modified}"
         if self.untracked:
             part += f" \N{WARNING SIGN} {self.untracked}"
         if self.deleted:
@@ -49,10 +49,13 @@ class RepoStatus:
         if self.staged:
             part += f" \N{CHECK MARK} {self.staged}"
         if self.stashes:
-            part += f" \N{CARD FILE BOX} {self.stashes}"
+            part += f" \N{UP ARROWHEAD IN A RECTANGLE BOX} {self.stashes}"
         parts.append(part.strip())
         parts = [part for part in parts if part != ""]
-        return [" | ".join(parts[0:x]) for x in range(1, len(parts) + 1)]
+        return [
+            " \N{LEFT VERTICAL BOX LINE} ".join(parts[0:x])
+            for x in range(1, len(parts) + 1)
+        ]
 
     @classmethod
     def exemplar(cls):
