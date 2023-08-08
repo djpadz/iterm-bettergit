@@ -19,5 +19,5 @@ _An enhanced git status bar widget for iTerm2_
 - Also has a special mode for rebasing, merging, cherry-picking, reversion, or bisection.
 
 ## Installation
-1. Download the latest release from the [releases page].
+1. Download the latest release from the [releases page](https://github.com/djpadz/iterm2-bettergit/releases).
 2. Double-click it to install it in iTerm2. Tell it to autolaunch.
