@@ -21,12 +21,3 @@ _An enhanced git status bar widget for iTerm2_
 ## Installation
 1. Download the latest release from the [releases page].
 2. Double-click it to install it in iTerm2. Tell it to autolaunch.
-3. You will need to add the following to your `~/.bash_profile` or `~/.zshrc`:
-    ```bash
-    iterm2_print_user_vars()
-    {
-        iterm2_set_user_var python_bettergit_cwd "${PWD}"
-        iterm2_set_user_var python_bettergit_random "${RANDOM}"
-    }
-    ```
-   If you have an existing `iterm2_print_user_vars()` function, then just add the body of the function above to the body of yours.
