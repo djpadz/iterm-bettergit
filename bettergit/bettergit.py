@@ -1,10 +1,25 @@
 #!/usr/bin/env python3.10
-import iterm2
+import asyncio
 from git_poller import GitPoller
+from iterm2 import (
+    EachSessionOnceMonitor,
+    PromptMonitor,
+    Reference,
+    Session,
+    SessionTerminationMonitor,
+    StatusBarComponent,
+    StatusBarRPC,
+    async_get_app,
+    async_get_last_prompt,
+    run_forever,
+)
+from iterm2.statusbar import Knob
 from pathlib import Path
 from random import randint
 from repo_status import RepoStatus
 from typing import Optional
+
+pollers: dict[str, GitPoller] = {}
 
 
 def find_git_root(path: str) -> Optional[Path]:
@@ -17,7 +32,7 @@ def find_git_root(path: str) -> Optional[Path]:
 
 
 async def main(connection):
-    python_bettergit_component = iterm2.StatusBarComponent(
+    python_bettergit_component = StatusBarComponent(
         short_description="Python BetterGit",
         detailed_description="Show the current branch and status of the current git repository",
         exemplar=RepoStatus.exemplar(),
@@ -27,13 +42,13 @@ async def main(connection):
     )
 
     # noinspection PyUnusedLocal
-    @iterm2.StatusBarRPC
+    @StatusBarRPC
     async def python_bettergit_callback(
         *,
-        knobs: list[iterm2.statusbar.Knob] = None,
-        python_bettergit_cwd=iterm2.Reference("user.python_bettergit_cwd?"),
-        python_bettergit_git=iterm2.Reference("user.python_bettergit_git?"),
-        session_id=iterm2.Reference("id"),
+        knobs: list[Knob] = None,
+        python_bettergit_cwd=Reference("user.python_bettergit_cwd?"),
+        python_bettergit_git=Reference("user.python_bettergit_git?"),
+        session_id=Reference("id"),
     ) -> [str | list[str]]:
         session_id = str(session_id)
         if python_bettergit_cwd is None:
@@ -46,25 +61,32 @@ async def main(connection):
         if git_root is None:
             return ""
         print(f"{session_id}: Git root at {git_root}")
-        r = await GitPoller(git_root, git_binary=python_bettergit_git).collect()
-        print(f"{session_id}: {r}")
+        poller = pollers.setdefault(
+            session_id,
+            GitPoller(
+                repo_root=git_root,
+                git_binary=python_bettergit_git,
+            ),
+        )
+        poller.repo_root = git_root
+        r = await poller.collect()
         return r.render()
 
     await python_bettergit_component.async_register(
         connection, python_bettergit_callback
     )
 
-    app = await iterm2.async_get_app(connection)
+    app = await async_get_app(connection)
 
-    async def monitor(session_id):
-        session: iterm2.Session = app.get_session_by_id(session_id)
+    async def prompt_monitor(session_id):
+        session: Session = app.get_session_by_id(session_id)
         if not session:
             return
-        async with iterm2.PromptMonitor(connection, session_id) as mon:
+        async with PromptMonitor(connection, session_id) as mon:
             while True:
                 _mode, prompt = await mon.async_get()
                 if prompt is None:
-                    prompt = await iterm2.async_get_last_prompt(connection, session_id)
+                    prompt = await async_get_last_prompt(connection, session_id)
                 if prompt is None:
                     continue
                 cwd = prompt.working_directory
@@ -75,7 +97,16 @@ async def main(connection):
                     "user.python_bettergit_cwd", f"{randint(0,65536)} {cwd}"
                 )
 
-    await iterm2.EachSessionOnceMonitor.async_foreach_session_create_task(app, monitor)
+    async def session_termination_monitor():
+        async with SessionTerminationMonitor(connection) as mon:
+            while True:
+                session_id = await mon.async_get()
+                print(f"{session_id}: Terminated")
+                if session_id in pollers:
+                    del pollers[session_id]
+
+    asyncio.create_task(session_termination_monitor())
+    await EachSessionOnceMonitor.async_foreach_session_create_task(app, prompt_monitor)
 
 
-iterm2.run_forever(main)
+run_forever(main)

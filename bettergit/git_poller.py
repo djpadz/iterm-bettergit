@@ -1,9 +1,14 @@
 import aiofiles
 import asyncio
 import shutil
+from asyncio import Future
 from pathlib import Path
 from repo_status import RepoStatus
 from typing import Optional
+
+POLLING_INTERVAL = 5 * 60  # 5 minutes
+
+last_poll: dict[Path, int] = {}
 
 
 class GitPoller:
@@ -12,15 +17,45 @@ class GitPoller:
         repo_root: str | Path,
         git_binary: Optional[str | Path] = None,
     ):
-        self.repo_root = Path(repo_root)
-        if git_binary is None:
-            git_binary = shutil.which("git")
-        self.git_binary = git_binary
+        self.repo_root = repo_root
+        self.git_binary = git_binary or shutil.which("git")
         self.collection_methods = [
             getattr(self, x) for x in dir(self) if x.startswith("collect_")
         ]
+        self.fetch_future: Optional[Future] = None
+
+    @property
+    def repo_root(self) -> Path:
+        return self._repo_root
+
+    @repo_root.setter
+    def repo_root(self, value: str | Path):
+        self._repo_root = Path(value)
+
+    @property
+    def git_binary(self) -> Path:
+        return self._git_binary
+
+    @git_binary.setter
+    def git_binary(self, value: str | Path):
+        self._git_binary = Path(value)
 
     async def collect(self) -> RepoStatus:
+        if self.fetch_future is not None:
+            if self.fetch_future.done():
+                await self.fetch_future
+                self.fetch_future = None
+                print(f"Done fetching {self.repo_root}")
+        else:
+            if (
+                last_poll.setdefault(self.repo_root, 0) + POLLING_INTERVAL
+                < asyncio.get_event_loop().time()
+            ):
+                print(f"Fetching {self.repo_root}")
+                self.fetch_future = asyncio.create_task(
+                    self._run_git_command("fetch", "--quiet")
+                )
+                last_poll[self.repo_root] = asyncio.get_event_loop().time()
         futures = [asyncio.create_task(x()) for x in self.collection_methods]
         results = await asyncio.gather(*futures)
         res = {}
