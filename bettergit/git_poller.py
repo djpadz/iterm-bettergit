@@ -46,6 +46,7 @@ class GitPoller:
                 await self.fetch_future
                 self.fetch_future = None
                 print(f"Done fetching {self.repo_root}")
+                last_poll[self.repo_root] = asyncio.get_event_loop().time()
         else:
             if (
                 last_poll.setdefault(self.repo_root, 0) + POLLING_INTERVAL
