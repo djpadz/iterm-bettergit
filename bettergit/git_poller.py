@@ -1,12 +1,15 @@
+from random import randint
+
 import aiofiles
 import asyncio
 import shutil
 from asyncio import Future
+from iterm2 import Session
 from pathlib import Path
 from repo_status import RepoStatus
 from typing import Optional
 
-POLLING_INTERVAL = 5 * 60  # 5 minutes
+POLLING_INTERVAL = 10  # 5 minutes
 
 last_poll: dict[Path, int] = {}
 
@@ -14,10 +17,11 @@ last_poll: dict[Path, int] = {}
 class GitPoller:
     def __init__(
         self,
-        repo_root: str | Path,
+        session: Session,
         git_binary: Optional[str | Path] = None,
     ):
-        self.repo_root = repo_root
+        self.repo_root = None
+        self.session = session
         self.git_binary = git_binary or shutil.which("git")
         self.collection_methods = [
             getattr(self, x) for x in dir(self) if x.startswith("collect_")
@@ -30,7 +34,7 @@ class GitPoller:
 
     @repo_root.setter
     def repo_root(self, value: str | Path):
-        self._repo_root = Path(value)
+        self._repo_root = Path(value) if value else None
 
     @property
     def git_binary(self) -> Path:
@@ -40,23 +44,52 @@ class GitPoller:
     def git_binary(self, value: str | Path):
         self._git_binary = Path(value)
 
+    @property
+    async def debug(self) -> bool:
+        dbg = await self.session.async_get_variable("user.python_bettergit_debug")
+        return dbg is not None and dbg.lower() not in ["", "0", "false", "off", "no"]
+
+    @property
+    def session(self) -> Session:
+        return self._session
+
+    @session.setter
+    def session(self, value: Session):
+        self._session = value
+
+    async def debug_log(self, *args):
+        if await self.debug:
+            print(f"{self.session.session_id}: ", *args)
+
+    async def _do_fetch(self) -> None:
+        cur_root = self.repo_root
+        await self.debug_log("Fetching in", cur_root)
+        await self._run_git_command("fetch", "--quiet")
+        last_poll[cur_root] = asyncio.get_event_loop().time()
+        if self.repo_root == cur_root:
+            cur_cwd = (
+                await self.session.async_get_variable("user.python_bettergit_cwd")
+            ).split(maxsplit=1)[1]
+            await self.session.async_set_variable(
+                "user.python_bettergit_cwd", f"{randint(0,65536)} {cur_cwd}"
+            )
+        await self.debug_log("Done fetching in", cur_root)
+
     async def collect(self) -> RepoStatus:
         if self.fetch_future is not None:
             if self.fetch_future.done():
+                await self.debug_log("Reaping future", self.fetch_future)
                 await self.fetch_future
                 self.fetch_future = None
-                print(f"Done fetching {self.repo_root}")
                 last_poll[self.repo_root] = asyncio.get_event_loop().time()
         else:
-            if (
+            rc, stdout = await self._run_git_command("remote", "show")
+            if stdout.strip() and (
                 last_poll.setdefault(self.repo_root, 0) + POLLING_INTERVAL
                 < asyncio.get_event_loop().time()
             ):
-                print(f"Fetching {self.repo_root}")
-                self.fetch_future = asyncio.create_task(
-                    self._run_git_command("fetch", "--quiet")
-                )
-                last_poll[self.repo_root] = asyncio.get_event_loop().time()
+                self.fetch_future = asyncio.create_task(self._do_fetch())
+                await self.debug_log("created:", self.fetch_future)
         futures = [asyncio.create_task(x()) for x in self.collection_methods]
         results = await asyncio.gather(*futures)
         res = {}
@@ -65,8 +98,10 @@ class GitPoller:
         # noinspection PyArgumentList
         return RepoStatus(**res)
 
-    @staticmethod
-    async def _run_command(command: str, /, *args, cwd: Path) -> tuple[int, str]:
+    async def _run_command(
+        self, command: [str | Path], /, *args, cwd: Path
+    ) -> tuple[int, str]:
+        await self.debug_log("Running ", command, *args, "in", cwd)
         proc = await asyncio.create_subprocess_exec(
             command,
             *args,
@@ -76,18 +111,22 @@ class GitPoller:
             cwd=cwd,
         )
         stdout, stderr = await proc.communicate()
+        await self.debug_log("Done running ", command)
+        await self.debug_log("rc:", proc.returncode)
+        await self.debug_log("stdout:", stdout)
+        await self.debug_log("stderr:", stderr)
         return proc.returncode, stdout.decode()
+
+    async def _run_git_command(self, /, *args, cwd: Path = None) -> tuple[str, int]:
+        if cwd is None:
+            cwd = self.repo_root
+        return await self._run_command(self.git_binary, *args, cwd=cwd)
 
     @staticmethod
     async def _read_first_line_int(f: [Path | str]) -> int:
         async with aiofiles.open(f, mode="r") as f:
             async for line in f:
                 return int(line.strip())
-
-    async def _run_git_command(self, /, *args, cwd: Path = None) -> tuple[str, int]:
-        if cwd is None:
-            cwd = self.repo_root
-        return await self._run_command(self.git_binary, *args, cwd=cwd)
 
     async def collect_repo_counts(self) -> dict[str, int]:
         rc, stdout = await self._run_git_command(

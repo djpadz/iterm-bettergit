@@ -32,6 +32,8 @@ def find_git_root(path: str) -> Optional[Path]:
 
 
 async def main(connection):
+    app = await async_get_app(connection)
+
     python_bettergit_component = StatusBarComponent(
         short_description="Python BetterGit",
         detailed_description="Show the current branch and status of the current git repository",
@@ -60,23 +62,21 @@ async def main(connection):
         git_root = find_git_root(python_bettergit_cwd)
         if git_root is None:
             return ""
-        print(f"{session_id}: Git root at {git_root}")
         poller = pollers.setdefault(
             session_id,
             GitPoller(
-                repo_root=git_root,
                 git_binary=python_bettergit_git,
+                session=app.get_session_by_id(session_id),
             ),
         )
         poller.repo_root = git_root
+        await poller.debug_log("Git root at ", git_root)
         r = await poller.collect()
         return r.render()
 
     await python_bettergit_component.async_register(
         connection, python_bettergit_callback
     )
-
-    app = await async_get_app(connection)
 
     async def prompt_monitor(session_id):
         session: Session = app.get_session_by_id(session_id)

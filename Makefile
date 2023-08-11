@@ -10,7 +10,7 @@ TARGET = bettergit.its
 
 SIGN = ${HOME}/.iterm2/it2sign
 SIGNING_CERT = "Apple Development: Dj Padzensky (SDQF5T59D6)"
-INSTALL_DIR = "${HOME}/Library/Application Support/iTerm2/Scripts/AutoLaunch"
+INSTALL_DIR = "${HOME}/Library/Application Support/iTerm2/Scripts/AutoLaunch/bettergit"
 
 all: $(TARGET)
 
