@@ -7,6 +7,7 @@ from typing import Awaitable, Callable, Optional
 import aiofiles
 
 from repo_status import RepoStatus
+from config import get_config
 
 POLLING_INTERVAL = 10  # 5 minutes
 
@@ -18,14 +19,11 @@ class GitPoller:
         self,
         session_id: str,
         update_trigger: Optional[Callable[[str], Awaitable[any]]] = None,
-        git_binary: Optional[str | Path] = None,
-        debug: bool = False,
     ):
         self.repo_root = None
         self.session_id = session_id
         self.update_trigger = update_trigger
-        self.git_binary = git_binary or shutil.which("git")
-        self.debug = debug
+        self.git_binary = get_config("git_binary") or shutil.which("git")
         self.repo_status = None
         self.collection_methods = [
             getattr(self, x) for x in dir(self) if x.startswith("collect_")
@@ -49,7 +47,7 @@ class GitPoller:
         self._git_binary = Path(value)
 
     def debug_log(self, *args) -> None:
-        if self.debug:
+        if get_config("debug"):
             print(f"{self.session_id}:", *args)
 
     async def _do_fetch(self) -> None:

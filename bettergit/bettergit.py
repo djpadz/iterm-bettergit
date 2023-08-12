@@ -1,6 +1,9 @@
 #!/usr/bin/env python3.10
 import asyncio
-from git_poller import GitPoller
+from pathlib import Path
+from random import randint
+from typing import Optional
+
 from iterm2 import (
     EachSessionOnceMonitor,
     PromptMonitor,
@@ -13,11 +16,11 @@ from iterm2 import (
     async_get_last_prompt,
     run_forever,
 )
-from iterm2.statusbar import CheckboxKnob, Knob
-from pathlib import Path
-from random import randint
+from iterm2.statusbar import CheckboxKnob, Knob, StringKnob
+
+from config import get_config_default, set_config, STRING_KNOB_CONFIGS
+from git_poller import GitPoller
 from repo_status import RepoStatus
-from typing import Optional
 
 pollers: dict[str, GitPoller] = {}
 
@@ -41,7 +44,13 @@ async def main(connection):
         update_cadence=None,
         identifier="net.padz.iterm2.python_bettergit",
         knobs=[
-            CheckboxKnob("Debug", False, "python_bettergit_debug"),
+            CheckboxKnob("Debug", False, "debug"),
+            *[
+                StringKnob(
+                    k.name, k.placeholder or "", get_config_default(k.key), k.key
+                )
+                for k in STRING_KNOB_CONFIGS
+            ],
         ],
     )
 
@@ -52,11 +61,9 @@ async def main(connection):
         cwd = await session.async_get_variable("user.python_bettergit_cwd")
         if not cwd:
             return
-        git_binary = await session.async_get_variable("user.python_bettergit_git")
         poller = pollers.setdefault(
             session_id,
             GitPoller(
-                git_binary=git_binary,
                 session_id=session_id,
                 update_trigger=trigger_update,
             ),
@@ -78,8 +85,9 @@ async def main(connection):
         poller = pollers.get(str(session_id))
         if poller is None:
             return ""
-        if "python_bettergit_debug" in knobs:
-            poller.debug = bool(knobs["python_bettergit_debug"])
+        if knobs is not None:
+            for k, v in knobs.items():
+                set_config(k, v)
         r = poller.repo_status
         if r:
             return r.render()

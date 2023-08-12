@@ -1,4 +1,5 @@
 SRC = bettergit/bettergit.py \
+	  bettergit/config.py \
 	  bettergit/git_poller.py \
 	  bettergit/license.py \
 	  bettergit/repo_status.py
