@@ -1,14 +1,16 @@
-import aiofiles
 import asyncio
 import shutil
 from asyncio import Future
 from pathlib import Path
-from repo_status import RepoStatus
 from typing import Awaitable, Callable, Optional
+
+import aiofiles
+
+from repo_status import RepoStatus
 
 POLLING_INTERVAL = 10  # 5 minutes
 
-last_poll: dict[Path, int] = {}
+last_poll: dict[Path, float] = {}
 
 
 class GitPoller:
@@ -105,7 +107,7 @@ class GitPoller:
         self.debug_log("stderr:", stderr)
         return proc.returncode, stdout.decode()
 
-    async def _run_git_command(self, /, *args, cwd: Path = None) -> tuple[str, int]:
+    async def _run_git_command(self, /, *args, cwd: Path = None) -> tuple[int, str]:
         if cwd is None:
             cwd = self.repo_root
         return await self._run_command(self.git_binary, *args, cwd=cwd)
@@ -113,8 +115,7 @@ class GitPoller:
     @staticmethod
     async def _read_first_line_int(f: [Path | str]) -> int:
         async with aiofiles.open(f, mode="r") as f:
-            async for line in f:
-                return int(line.strip())
+            return int((await f.readline()).strip())
 
     async def collect_repo_counts(self) -> dict[str, int]:
         rc, stdout = await self._run_git_command(
