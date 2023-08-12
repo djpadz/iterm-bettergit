@@ -71,20 +71,18 @@ async def main(connection):
     # noinspection PyUnusedLocal
     @StatusBarRPC
     async def python_bettergit_callback(
-        *,
-        knobs: list[Knob] = None,
+        knobs: dict[str, Knob] = None,
         python_bettergit_trigger=Reference("user.python_bettergit_trigger?"),
         session_id=Reference("id"),
     ) -> [str | list[str]]:
-        if python_bettergit_trigger is None or not python_bettergit_trigger:
-            return ""
         poller = pollers.get(str(session_id))
-        if poller:
-            if "python_bettergit_debug" in knobs:
-                poller.debug = bool(knobs["python_bettergit_debug"])
-            r = poller.repo_status
-            if r:
-                return r.render()
+        if poller is None:
+            return ""
+        if "python_bettergit_debug" in knobs:
+            poller.debug = bool(knobs["python_bettergit_debug"])
+        r = poller.repo_status
+        if r:
+            return r.render()
         return ""
 
     await python_bettergit_component.async_register(
@@ -122,7 +120,9 @@ async def main(connection):
                     del pollers[session_id]
 
     asyncio.create_task(session_termination_monitor())
-    await EachSessionOnceMonitor.async_foreach_session_create_task(app, prompt_monitor)
+    asyncio.create_task(
+        EachSessionOnceMonitor.async_foreach_session_create_task(app, prompt_monitor)
+    )
 
 
 run_forever(main)
