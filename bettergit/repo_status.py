@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from logger import logger
 from typing import Optional
 from config import get_config
 
@@ -36,6 +37,7 @@ THE POSSIBILITY OF SUCH DAMAGE.
 
 @dataclass(frozen=True, kw_only=True)
 class RepoStatus:
+    session_id: str
     push_count: int
     pull_count: int
     current_branch: str
@@ -50,6 +52,7 @@ class RepoStatus:
     total: Optional[int]
 
     def render(self) -> [str | list[str]]:
+        logger.debug("%s: rendering %s", self.session_id, self)
         if self.state:
             status_line = get_config("icon_status_other") + " " + self.state
             if self.step is not None and self.total is not None:
@@ -92,6 +95,7 @@ class RepoStatus:
     @classmethod
     def exemplar(cls):
         return cls(
+            session_id="exemplar",
             current_branch="main",
             dirty=True,
             push_count=2,

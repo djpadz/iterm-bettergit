@@ -1,7 +1,8 @@
 SRC = bettergit/bettergit.py \
 	  bettergit/config.py \
 	  bettergit/git_poller.py \
-	  bettergit/repo_status.py
+	  bettergit/repo_status.py \
+	  bettergit/logger.py
 
 ADDL_SRC = setup.cfg \
            metadata.json

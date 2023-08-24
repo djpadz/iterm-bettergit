@@ -1,6 +1,7 @@
 import asyncio
 import shutil
 from asyncio import Future
+from logger import logger
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
 
@@ -77,16 +78,12 @@ class GitPoller:
     def git_binary(self, value: str | Path):
         self._git_binary = Path(value)
 
-    def debug_log(self, *args) -> None:
-        if get_config("debug"):
-            print(f"{self.session_id}:", *args)
-
     async def _do_fetch(self) -> None:
         cur_root = self.repo_root
-        self.debug_log("Fetching in", cur_root)
+        logger.debug("%s: Fetching in %s", self.session_id, cur_root)
         await self._run_git_command("fetch", "--quiet")
         last_poll[cur_root] = asyncio.get_event_loop().time()
-        self.debug_log("Done fetching in", cur_root)
+        logger.debug("%s: Done fetching in %s", self.session_id, cur_root)
         if self.repo_root == cur_root:
             if self.update_trigger:
                 await self.update_trigger(self.session_id)
@@ -97,7 +94,9 @@ class GitPoller:
             return
         if self.fetch_future is not None:
             if self.fetch_future.done():
-                self.debug_log("Reaping future", self.fetch_future)
+                logger.debug(
+                    "%s: Reaping future %s", self.session_id, self.fetch_future
+                )
                 await self.fetch_future
                 self.fetch_future = None
                 last_poll[self.repo_root] = asyncio.get_event_loop().time()
@@ -108,10 +107,10 @@ class GitPoller:
                 < asyncio.get_event_loop().time()
             ):
                 self.fetch_future = asyncio.create_task(self._do_fetch())
-                self.debug_log("created:", self.fetch_future)
+                logger.debug("%s: created: %s", self.session_id, self.fetch_future)
         futures = [asyncio.create_task(x()) for x in self.collection_methods]
         results = await asyncio.gather(*futures)
-        res = {}
+        res = {"session_id": self.session_id}
         for r in results:
             res.update(r)
         # noinspection PyArgumentList
@@ -120,7 +119,7 @@ class GitPoller:
     async def _run_command(
         self, command: [str | Path], /, *args, cwd: Path
     ) -> tuple[int, str]:
-        self.debug_log("Running ", command, *args, "in", cwd)
+        logger.debug("%s: Running %s %s in %s", self.session_id, command, args, cwd)
         proc = await asyncio.create_subprocess_exec(
             command,
             *args,
@@ -130,10 +129,10 @@ class GitPoller:
             cwd=cwd,
         )
         stdout, stderr = await proc.communicate()
-        self.debug_log("Done running ", command)
-        self.debug_log("rc:", proc.returncode)
-        self.debug_log("stdout:", stdout)
-        self.debug_log("stderr:", stderr)
+        logger.debug("%s: Done running %s %s", self.session_id, command, args)
+        logger.debug("%s: rc: %d", self.session_id, proc.returncode)
+        logger.debug("%s: stdout: %s", self.session_id, stdout)
+        logger.debug("%s: stderr: %s", self.session_id, stderr)
         return proc.returncode, stdout.decode()
 
     async def _run_git_command(self, /, *args, cwd: Path = None) -> tuple[int, str]:

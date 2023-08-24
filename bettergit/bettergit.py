@@ -1,9 +1,7 @@
 #!/usr/bin/env python3.10
 import asyncio
-from pathlib import Path
-from random import randint
-from typing import Optional
-
+from config import STRING_KNOB_CONFIGS, get_config_default, set_config
+from git_poller import GitPoller
 from iterm2 import (
     EachSessionOnceMonitor,
     PromptMonitor,
@@ -17,10 +15,11 @@ from iterm2 import (
     run_forever,
 )
 from iterm2.statusbar import CheckboxKnob, Knob, StringKnob
-
-from config import STRING_KNOB_CONFIGS, get_config_default, set_config
-from git_poller import GitPoller
+from logger import logger, set_debug as logger_set_debug
+from pathlib import Path
+from random import randint
 from repo_status import RepoStatus
+from typing import Optional
 
 LICENSE = """
 Copyright 2023 Dj Padzensky
@@ -100,7 +99,7 @@ async def main(connection):
             ),
         )
         poller.repo_root = find_git_root(cwd)
-        poller.debug_log("Git root at", poller.repo_root)
+        logger.debug("%s: Git root at %s", session_id, poller.repo_root)
         await poller.collect()
         await session.async_set_variable(
             "user.python_bettergit_trigger", randint(0, 65536)
@@ -119,6 +118,8 @@ async def main(connection):
         if knobs is not None:
             for k, v in knobs.items():
                 set_config(k, v)
+                if k == "debug":
+                    logger_set_debug(v)
         r = poller.repo_status
         if r:
             return r.render()
