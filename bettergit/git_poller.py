@@ -1,14 +1,13 @@
+import aiofiles
 import asyncio
+import os
 import shutil
 from asyncio import Future
+from config import get_config
 from logger import logger
 from pathlib import Path
-from typing import Awaitable, Callable, Optional
-
-import aiofiles
-
-from config import get_config
 from repo_status import RepoStatus
+from typing import Awaitable, Callable, Optional
 
 """
 Copyright 2023 Dj Padzensky
@@ -55,7 +54,6 @@ class GitPoller:
         self.repo_root = None
         self.session_id = session_id
         self.update_trigger = update_trigger
-        self.git_binary = get_config("git_binary") or shutil.which("git")
         self.repo_status = None
         self.collection_methods = [
             getattr(self, x) for x in dir(self) if x.startswith("collect_")
@@ -69,14 +67,6 @@ class GitPoller:
     @repo_root.setter
     def repo_root(self, value: str | Path):
         self._repo_root = Path(value) if value else None
-
-    @property
-    def git_binary(self) -> Path:
-        return self._git_binary
-
-    @git_binary.setter
-    def git_binary(self, value: str | Path):
-        self._git_binary = Path(value)
 
     async def _do_fetch(self) -> None:
         cur_root = self.repo_root
@@ -138,7 +128,17 @@ class GitPoller:
     async def _run_git_command(self, /, *args, cwd: Path = None) -> tuple[int, str]:
         if cwd is None:
             cwd = self.repo_root
-        return await self._run_command(self.git_binary, *args, cwd=cwd)
+        git_binary = get_config("git_binary")
+        if not Path(git_binary).is_file() and shutil.which(git_binary) is None:
+            raise Exception(f"git binary {git_binary} not found")
+        # This isn't portable, but iTerm is macOS-only anyway
+        cur_path = os.getenv("PATH", os.defpath)
+        try:
+            if Path(git_binary).is_absolute():
+                os.environ["PATH"] += f":{Path(git_binary).parent}"
+            return await self._run_command(get_config("git_binary"), *args, cwd=cwd)
+        finally:
+            os.environ["PATH"] = cur_path
 
     @staticmethod
     async def _read_first_line_int(f: [Path | str]) -> int:
