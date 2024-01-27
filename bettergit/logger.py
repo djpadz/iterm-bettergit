@@ -1,6 +1,6 @@
 import logging
 
-"""
+LICENSE = """
 Copyright 2023 Dj Padzensky
 
 Redistribution and use in source and binary forms, with or without
@@ -31,11 +31,18 @@ ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
 THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s: %(filename)s:%(funcName)s:%(lineno)d %(message)s",
+)
 
 
 def set_debug(debug: bool):
-    logger.setLevel(logging.DEBUG if debug else logging.INFO)
+    new_level = logging.DEBUG if debug else logging.INFO
+    cur_level = logger.getEffectiveLevel()
+    if new_level != cur_level:
+        logger.setLevel(new_level)
+        logger.info(f"Set log level to {new_level}")
 
 
 logger = logging.getLogger()

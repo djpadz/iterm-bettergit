@@ -9,7 +9,7 @@ from pathlib import Path
 from repo_status import RepoStatus
 from typing import Awaitable, Callable, Optional
 
-"""
+LICENSE = """
 Copyright 2023 Dj Padzensky
 
 Redistribution and use in source and binary forms, with or without
@@ -74,9 +74,8 @@ class GitPoller:
         await self._run_git_command("fetch", "--quiet")
         last_poll[cur_root] = asyncio.get_event_loop().time()
         logger.debug("%s: Done fetching in %s", self.session_id, cur_root)
-        if self.repo_root == cur_root:
-            if self.update_trigger:
-                await self.update_trigger(self.session_id)
+        if self.repo_root == cur_root and self.update_trigger:
+            await self.update_trigger(self.session_id)
 
     async def collect(self) -> None:
         if self.repo_root is None:
@@ -96,10 +95,12 @@ class GitPoller:
                 last_poll.setdefault(self.repo_root, 0) + POLLING_INTERVAL
                 < asyncio.get_event_loop().time()
             ):
-                self.fetch_future = asyncio.create_task(self._do_fetch())
-                logger.debug("%s: created: %s", self.session_id, self.fetch_future)
-        futures = [asyncio.create_task(x()) for x in self.collection_methods]
-        results = await asyncio.gather(*futures)
+                if self.fetch_future is None:
+                    self.fetch_future = asyncio.create_task(self._do_fetch())
+                    logger.debug("%s: created: %s", self.session_id, self.fetch_future)
+        results = await asyncio.gather(
+            *[asyncio.create_task(x()) for x in self.collection_methods]
+        )
         res = {"session_id": self.session_id}
         for r in results:
             res.update(r)
@@ -131,11 +132,12 @@ class GitPoller:
         git_binary = get_config("git_binary")
         if not Path(git_binary).is_file() and shutil.which(git_binary) is None:
             raise Exception(f"git binary {git_binary} not found")
-        # This isn't portable, but iTerm is macOS-only anyway
-        cur_path = os.getenv("PATH", os.defpath)
+        cur_path = os.getenv("PATH", os.path.defpath)
         try:
             if Path(git_binary).is_absolute():
-                os.environ["PATH"] += f":{Path(git_binary).parent}"
+                new_path = cur_path.split(os.path.pathsep)
+                new_path.append(str(Path(git_binary).parent))
+                os.environ["PATH"] = os.path.pathsep.join(new_path)
             return await self._run_command(get_config("git_binary"), *args, cwd=cwd)
         finally:
             os.environ["PATH"] = cur_path

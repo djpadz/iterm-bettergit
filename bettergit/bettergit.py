@@ -3,6 +3,7 @@ import asyncio
 from config import STRING_KNOB_CONFIGS, get_config_default, set_config
 from git_poller import GitPoller
 from iterm2 import (
+    App,
     EachSessionOnceMonitor,
     PromptMonitor,
     Reference,
@@ -52,7 +53,8 @@ ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
 THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-pollers: dict[str, GitPoller] = {}
+TRIGGER_VAR = "user.python_bettergit_trigger"
+CWD_VAR = "user.python_bettergit_cwd"
 
 
 def find_git_root(path: str) -> Optional[Path]:
@@ -65,9 +67,89 @@ def find_git_root(path: str) -> Optional[Path]:
 
 
 async def main(connection):
-    app = await async_get_app(connection)
+    pollers: dict[str, GitPoller] = {}
+    cwds: dict[str, str] = {}
 
-    python_bettergit_component = StatusBarComponent(
+    logger.debug("start")
+    app: App = await async_get_app(connection)
+    logger.debug("Got app")
+
+    @StatusBarRPC
+    async def sb_component_callback(
+        knobs: dict[str, Knob] = None,
+        _trigger=Reference(f"{TRIGGER_VAR}?"),
+        session_id=Reference("id"),
+    ):
+        if "debug" in knobs:
+            logger_set_debug(knobs["debug"] == 1)
+        logger.debug("%s: start", session_id)
+        for k, v in knobs.items() or {}:
+            set_config(k, v)
+        session_id = str(session_id)
+        cwd = cwds.get(session_id)
+        if cwd is None:
+            logger.debug("%s: no cwd", session_id)
+            return ""
+        cwd = str(cwd)
+        if session_id not in pollers:
+            pollers[session_id] = GitPoller(
+                session_id=str(session_id),
+                update_trigger=lambda _session_id: app.async_set_variable(
+                    TRIGGER_VAR, randint(0, 1000000)
+                ),
+            )
+        poller = pollers[session_id]
+        poller.repo_root = find_git_root(cwd)
+        logger.debug("%s: Git root at %s", session_id, poller.repo_root)
+        await poller.collect()
+        logger.debug("%s: Repo status: %s", session_id, poller.repo_status)
+        if poller is None:
+            logger.debug("%s: no poller", session_id)
+            return ""
+        r = poller.repo_status
+        logger.debug("%s: repo status: %s", session_id, r)
+        ret = r.render() if r else ""
+        logger.debug('%s: returning "%s"', session_id, ret)
+        return ret
+
+    async def _update_cwd(session_id: str) -> bool:
+        prompt = await async_get_last_prompt(connection, session_id)
+        if prompt is None:
+            return
+        cwd = prompt.working_directory
+        if cwd is None:
+            return
+        session = app.get_session_by_id(session_id)
+        if session:
+            cwds[session_id] = cwd
+            await session.async_set_variable(TRIGGER_VAR, randint(0, 1000000))
+            return True
+        logger.debug("%s: Session not found", session_id)
+        pollers.pop(session_id, None)
+        cwds.pop(session_id, None)
+        return False
+
+    async def prompt_monitor(session_id: str):
+        session: Session = app.get_session_by_id(session_id)
+        if not session:
+            return
+        await _update_cwd(session_id)
+        async with PromptMonitor(connection, session_id) as mon:
+            while True:
+                await mon.async_get()
+                if not await _update_cwd(session_id):
+                    break
+        logger.debug("%s: prompt monitor done", session_id)
+
+    async def session_termination_monitor():
+        async with SessionTerminationMonitor(connection) as mon:
+            while True:
+                session_id = await mon.async_get()
+                logger.debug("%s: session terminated", session_id)
+                pollers.pop(session_id, None)
+                cwds.pop(session_id, None)
+
+    sb_component = StatusBarComponent(
         short_description="Python BetterGit",
         detailed_description="Show the current branch and status of the current git repository",
         exemplar=RepoStatus.exemplar(),
@@ -84,85 +166,10 @@ async def main(connection):
         ],
     )
 
-    async def trigger_update(session_id: str):
-        session = app.get_session_by_id(session_id)
-        if not session:
-            return
-        cwd = await session.async_get_variable("user.python_bettergit_cwd")
-        if not cwd:
-            return
-        poller = pollers.setdefault(
-            session_id,
-            GitPoller(
-                session_id=session_id,
-                update_trigger=trigger_update,
-            ),
-        )
-        poller.repo_root = find_git_root(cwd)
-        logger.debug("%s: Git root at %s", session_id, poller.repo_root)
-        await poller.collect()
-        await session.async_set_variable(
-            "user.python_bettergit_trigger", randint(0, 65536)
-        )
-
-    # noinspection PyUnusedLocal
-    @StatusBarRPC
-    async def python_bettergit_callback(
-        knobs: dict[str, Knob] = None,
-        python_bettergit_trigger=Reference("user.python_bettergit_trigger?"),
-        session_id=Reference("id"),
-    ) -> [str | list[str]]:
-        poller = pollers.get(str(session_id))
-        if poller is None:
-            return ""
-        if knobs is not None:
-            for k, v in knobs.items():
-                set_config(k, v)
-                if k == "debug":
-                    logger_set_debug(v)
-        r = poller.repo_status
-        if r:
-            return r.render()
-        return ""
-
-    await python_bettergit_component.async_register(
-        connection, python_bettergit_callback
-    )
-
-    async def _update_cwd(session_id: str):
-        prompt = await async_get_last_prompt(connection, session_id)
-        if prompt is None:
-            return
-        cwd = prompt.working_directory
-        if cwd is None:
-            return
-        session = app.get_session_by_id(session_id)
-        if not session:
-            return
-        await session.async_set_variable("user.python_bettergit_cwd", cwd)
-        await trigger_update(session_id)
-
-    async def prompt_monitor(session_id: str):
-        session: Session = app.get_session_by_id(session_id)
-        if not session:
-            return
-        await _update_cwd(session_id)
-        async with PromptMonitor(connection, session_id) as mon:
-            while True:
-                await mon.async_get()
-                await _update_cwd(session_id)
-
-    async def session_termination_monitor():
-        async with SessionTerminationMonitor(connection) as mon:
-            while True:
-                session_id = await mon.async_get()
-                if session_id in pollers:
-                    del pollers[session_id]
-
+    await sb_component.async_register(connection, sb_component_callback)
     asyncio.create_task(session_termination_monitor())
-    asyncio.create_task(
-        EachSessionOnceMonitor.async_foreach_session_create_task(app, prompt_monitor)
-    )
+    await EachSessionOnceMonitor.async_foreach_session_create_task(app, prompt_monitor)
 
 
+logger.debug("running forever!")
 run_forever(main)
