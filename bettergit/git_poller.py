@@ -1,13 +1,13 @@
-import aiofiles
 import asyncio
-import os
 import shutil
 from asyncio import Future
-from config import get_config
-from logger import logger
+from os import PathLike, defpath, environ, getenv, pathsep
 from pathlib import Path
-from repo_status import RepoStatus
 from typing import Awaitable, Callable, Optional
+
+from .config import get_config
+from .logger import logger
+from .repo_status import RepoStatus
 
 LICENSE = """
 Copyright 2023 Dj Padzensky
@@ -90,7 +90,7 @@ class GitPoller:
                 self.fetch_future = None
                 last_poll[self.repo_root] = asyncio.get_event_loop().time()
         else:
-            rc, stdout = await self._run_git_command("remote", "show")
+            _, stdout = await self._run_git_command("remote", "show")
             if stdout.strip() and (
                 last_poll.setdefault(self.repo_root, 0) + POLLING_INTERVAL
                 < asyncio.get_event_loop().time()
@@ -105,10 +105,24 @@ class GitPoller:
         for r in results:
             res.update(r)
         # noinspection PyArgumentList
-        self.repo_status = RepoStatus(**res)
+        self.repo_status = RepoStatus(
+            session_id=res["session_id"],
+            push_count=res["push_count"],
+            pull_count=res["pull_count"],
+            current_branch=res["current_branch"],
+            dirty=res["dirty"],
+            untracked=res["untracked"],
+            modified=res["modified"],
+            staged=res["staged"],
+            deleted=res["deleted"],
+            stashes=res["stashes"],
+            state=res.get("state"),
+            step=res.get("step"),
+            total=res.get("total"),
+        )
 
     async def _run_command(
-        self, command: [str | Path], /, *args, cwd: Path
+        self, command: str | PathLike, /, *args, cwd: Path
     ) -> tuple[int, str]:
         logger.debug("%s: Running %s %s in %s", self.session_id, command, args, cwd)
         proc = await asyncio.create_subprocess_exec(
@@ -131,28 +145,27 @@ class GitPoller:
             cwd = self.repo_root
         git_binary = get_config("git_binary")
         if not Path(git_binary).is_file() and shutil.which(git_binary) is None:
-            raise Exception(f"git binary {git_binary} not found")
-        cur_path = os.getenv("PATH", os.path.defpath)
+            raise RuntimeError(f"git binary {git_binary} not found")
+        cur_path = getenv("PATH", defpath)
         try:
             if Path(git_binary).is_absolute():
-                new_path = cur_path.split(os.path.pathsep)
+                new_path = cur_path.split(pathsep)
                 new_path.append(str(Path(git_binary).parent))
-                os.environ["PATH"] = os.path.pathsep.join(new_path)
+                environ["PATH"] = pathsep.join(new_path)
             return await self._run_command(get_config("git_binary"), *args, cwd=cwd)
         finally:
-            os.environ["PATH"] = cur_path
+            environ["PATH"] = cur_path
 
     @staticmethod
-    async def _read_first_line_int(f: [Path | str]) -> int:
-        async with aiofiles.open(f, mode="r") as f:
-            return int((await f.readline()).strip())
+    async def _read_first_line_int(f: PathLike | str) -> int:
+        return int(Path(f).read_text(encoding="ascii").splitlines()[0].strip())
 
     async def collect_repo_counts(self) -> dict[str, int]:
         rc, stdout = await self._run_git_command(
             "status", "--porcelain", "--ignore-submodules", "-unormal"
         )
         if rc != 0:
-            raise Exception(f"git status failed: {stdout}")
+            raise RuntimeError(f"git status failed: {stdout}")
         dirty = False
         untracked = 0
         modified = 0
@@ -191,12 +204,12 @@ class GitPoller:
         rc, stdout = await self._run_git_command("rev-parse", "--short", "HEAD")
         if rc == 0:
             return {"current_branch": f"[{stdout.strip()}]"}  # detached HEAD
-        raise Exception(f"git branch failed: {stdout}")
+        raise RuntimeError(f"git branch failed: {stdout}")
 
     async def collect_stashes(self) -> dict[str, int]:
         rc, stdout = await self._run_git_command("stash", "list")
         if rc != 0:
-            raise Exception(f"git stash failed: {stdout}")
+            raise RuntimeError(f"git stash failed: {stdout}")
         return {"stashes": len(stdout.splitlines())}
 
     async def collect_counts(self) -> dict[str, int]:

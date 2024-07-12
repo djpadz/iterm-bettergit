@@ -1,7 +1,8 @@
 from dataclasses import dataclass
-from logger import logger
 from typing import Optional
-from config import get_config
+
+from .config import get_config
+from .logger import logger
 
 LICENSE = """
 Copyright 2023 Dj Padzensky
@@ -51,7 +52,7 @@ class RepoStatus:
     step: Optional[int]
     total: Optional[int]
 
-    def render(self) -> [str | list[str]]:
+    def render(self) -> str | list[str]:
         logger.debug("%s: rendering %s", self.session_id, self)
         if self.state:
             status_line = get_config("icon_status_other") + " " + self.state

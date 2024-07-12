@@ -42,7 +42,7 @@ def set_debug(debug: bool):
     cur_level = logger.getEffectiveLevel()
     if new_level != cur_level:
         logger.setLevel(new_level)
-        logger.info(f"Set log level to {new_level}")
+        logger.info("Set log level to %s", new_level)
 
 
 logger = logging.getLogger()
