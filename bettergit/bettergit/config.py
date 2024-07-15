@@ -34,6 +34,7 @@ THE POSSIBILITY OF SUCH DAMAGE.
 CONFIG_DEFAULTS = {
     "debug": False,
     "git_binary": "/usr/bin/git",
+    "icon_fetching": "\N{WATCH}",
     "icon_status_other": "\u203C\uFE0F",  # Red double exclamation mark
     "icon_status_dirty": "\U0001F534",  # Red circle
     "icon_status_push_or_pull": "\U0001F7E1",  # Yellow circle

@@ -1,4 +1,5 @@
 import asyncio
+import dataclasses
 import shutil
 from asyncio import Future
 from os import PathLike, defpath, environ, getenv, pathsep
@@ -47,18 +48,29 @@ last_poll: dict[Path, float] = {}
 
 class GitPoller:
     def __init__(
-        self,
-        session_id: str,
-        update_trigger: Optional[Callable[[str], Awaitable[any]]] = None,
+        self, session_id: str, update_trigger: Callable[[RepoStatus], Awaitable[any]]
     ):
-        self.repo_root = None
+        self._repo_root = None
         self.session_id = session_id
         self.update_trigger = update_trigger
-        self.repo_status = None
+        self._repo_status = None
         self.collection_methods = [
             getattr(self, x) for x in dir(self) if x.startswith("collect_")
         ]
-        self.fetch_future: Optional[Future] = None
+        self._fetch_future: Optional[Future] = None
+        self._time_to_clear_repo_status = True
+
+    async def clear_repo_status(self) -> None:
+        self._time_to_clear_repo_status = False
+        self._repo_status = RepoStatus(session_id=self.session_id)
+        await self.update_trigger(self._repo_status)
+
+    async def update_repo_status(self, new_values: dict[str, any]) -> None:
+        new_status = dataclasses.replace(self._repo_status, **new_values)
+        logger.debug("%s: New status: %s", self.session_id, new_status)
+        if new_status != self._repo_status:
+            self._repo_status = new_status
+            await self.update_trigger(self._repo_status)
 
     @property
     def repo_root(self) -> Path:
@@ -66,7 +78,14 @@ class GitPoller:
 
     @repo_root.setter
     def repo_root(self, value: str | Path):
-        self._repo_root = Path(value) if value else None
+        logger.debug("%s: Setting repo root to %s", self.session_id, value)
+        new_value = Path(value) if value is not None else None
+        if new_value != self._repo_root:
+            logger.debug("%s: this is a change", self.session_id)
+            self._time_to_clear_repo_status = True
+            self._repo_root = new_value
+            self._fetch_future = None
+        logger.debug("%s: set root", self.session_id)
 
     async def _do_fetch(self) -> None:
         cur_root = self.repo_root
@@ -75,51 +94,42 @@ class GitPoller:
         last_poll[cur_root] = asyncio.get_event_loop().time()
         logger.debug("%s: Done fetching in %s", self.session_id, cur_root)
         if self.repo_root == cur_root and self.update_trigger:
-            await self.update_trigger(self.session_id)
+            logger.debug("triggering update for %s", self.session_id)
+            await self.update_trigger(self._repo_status)
 
     async def collect(self) -> None:
+        logger.debug("%s: Collecting", self.session_id)
+        if (
+            self._time_to_clear_repo_status
+            or self._repo_status.repo_root != self.repo_root
+        ):
+            await self.clear_repo_status()
+        self._repo_status.repo_root = self.repo_root
         if self.repo_root is None:
-            self.repo_status = None
+            logger.debug("%s: No repo root", self.session_id)
             return
-        if self.fetch_future is not None:
-            if self.fetch_future.done():
-                logger.debug(
-                    "%s: Reaping future %s", self.session_id, self.fetch_future
-                )
-                await self.fetch_future
-                self.fetch_future = None
-                last_poll[self.repo_root] = asyncio.get_event_loop().time()
-        else:
-            _, stdout = await self._run_git_command("remote", "show")
-            if stdout.strip() and (
-                last_poll.setdefault(self.repo_root, 0) + POLLING_INTERVAL
-                < asyncio.get_event_loop().time()
-            ):
-                if self.fetch_future is None:
-                    self.fetch_future = asyncio.create_task(self._do_fetch())
-                    logger.debug("%s: created: %s", self.session_id, self.fetch_future)
+        logger.debug("%s: Repo root is %s", self.session_id, self.repo_root)
+        if self._fetch_future is not None:
+            await self._fetch_future
+            self._fetch_future = None
+        _, stdout = await self._run_git_command("remote", "show")
+        if stdout.strip() and (
+            last_poll.setdefault(self.repo_root, 0) + POLLING_INTERVAL
+            < asyncio.get_event_loop().time()
+        ):
+            if self._fetch_future is None:
+                self._fetch_future = asyncio.create_task(self._do_fetch())
+                logger.debug("%s: created: %s", self.session_id, self._fetch_future)
+        logger.debug("%s: Running collection methods", self.session_id)
         results = await asyncio.gather(
             *[asyncio.create_task(x()) for x in self.collection_methods]
         )
-        res = {"session_id": self.session_id}
+        res = {}
         for r in results:
             res.update(r)
+        logger.debug("%s: Collection results: %s", self.session_id, res)
         # noinspection PyArgumentList
-        self.repo_status = RepoStatus(
-            session_id=res["session_id"],
-            push_count=res["push_count"],
-            pull_count=res["pull_count"],
-            current_branch=res["current_branch"],
-            dirty=res["dirty"],
-            untracked=res["untracked"],
-            modified=res["modified"],
-            staged=res["staged"],
-            deleted=res["deleted"],
-            stashes=res["stashes"],
-            state=res.get("state"),
-            step=res.get("step"),
-            total=res.get("total"),
-        )
+        await self.update_repo_status(res)
 
     async def _run_command(
         self, command: str | PathLike, /, *args, cwd: Path
@@ -143,10 +153,13 @@ class GitPoller:
     async def _run_git_command(self, /, *args, cwd: Path = None) -> tuple[int, str]:
         if cwd is None:
             cwd = self.repo_root
+        logger.debug("%s: Running git %s in %s", self.session_id, args, cwd)
         git_binary = get_config("git_binary")
+        logger.debug("%s: git binary is %s", self.session_id, git_binary)
         if not Path(git_binary).is_file() and shutil.which(git_binary) is None:
-            raise RuntimeError(f"git binary {git_binary} not found")
+            raise FileNotFoundError(f"git binary {git_binary} not found")
         cur_path = getenv("PATH", defpath)
+        logger.debug("%s: PATH is %s", self.session_id, cur_path)
         try:
             if Path(git_binary).is_absolute():
                 new_path = cur_path.split(pathsep)
